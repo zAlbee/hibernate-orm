@@ -35,6 +35,7 @@ import java.util.Map;
 import org.hibernate.HibernateException;
 import org.hibernate.MappingException;
 import org.hibernate.dialect.Dialect;
+import org.hibernate.dialect.MySQL5InnoDBDialect;
 import org.hibernate.engine.spi.Mapping;
 import org.hibernate.tool.hbm2ddl.ColumnMetadata;
 import org.hibernate.tool.hbm2ddl.TableMetadata;
@@ -438,6 +439,9 @@ public class Table implements RelationalModel, Serializable {
 				if ( columnComment != null ) {
 					alter.append( dialect.getColumnComment( columnComment ) );
 				}
+
+				if (dialect instanceof MySQL5InnoDBDialect)
+					alter.append(", lock=shared ");
 
 				results.add( alter.toString() );
 			}
