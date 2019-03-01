@@ -199,6 +199,9 @@ public class Configuration implements Serializable {
 	 */
 	private static final String SEARCH_STARTUP_METHOD = "enableHibernateSearch";
 
+	private static SessionFactoryImpl initialSessionFact;
+	private static Object initialSessionFactMutex = new Object();
+
 	protected MetadataSourceQueue metadataSourceQueue;
 	private transient ReflectionManager reflectionManager;
 
@@ -1750,6 +1753,22 @@ public class Configuration implements Serializable {
 	 * @throws HibernateException usually indicates an invalid configuration or invalid mapping information
 	 */
 	public SessionFactory buildSessionFactory(ServiceRegistry serviceRegistry) throws HibernateException {
+		return buildSessionFactory(serviceRegistry, false);
+	}
+
+	/**
+	 * Create a {@link SessionFactory} using the properties and mappings in this configuration. The
+	 * {@link SessionFactory} will be immutable, so changes made to {@code this} {@link Configuration} after
+	 * building the {@link SessionFactory} will not affect it.
+	 *
+	 * @param serviceRegistry The registry of services to be used in creating this session factory.
+	 * @param shared Whether to share metadata between session factories
+	 *
+	 * @return The built {@link SessionFactory}
+	 *
+	 * @throws HibernateException usually indicates an invalid configuration or invalid mapping information
+	 */
+	public SessionFactory buildSessionFactory(ServiceRegistry serviceRegistry, boolean shared) throws HibernateException {
 		LOG.debugf( "Preparing to build session factory with filters : %s", filterDefinitions );
 		
 		buildTypeRegistrations( serviceRegistry );
@@ -1766,13 +1785,37 @@ public class Configuration implements Serializable {
 		ConfigurationHelper.resolvePlaceHolders( copy );
 		Settings settings = buildSettings( copy, serviceRegistry );
 
-		return new SessionFactoryImpl(
-				this,
-				mapping,
-				serviceRegistry,
-				settings,
-				sessionFactoryObserver
-			);
+		if (shared){
+			synchronized (initialSessionFactMutex) {
+				if (initialSessionFact == null){
+					initialSessionFact = new SessionFactoryImpl(
+							this,
+							mapping,
+							serviceRegistry,
+							settings,
+							sessionFactoryObserver);
+				}
+			}
+		}
+
+		if (!shared) {
+			return new SessionFactoryImpl(
+					this,
+					mapping,
+					serviceRegistry,
+					settings,
+					sessionFactoryObserver
+				);
+		} else {
+			return new SessionFactoryImpl(
+					this,
+					mapping,
+					serviceRegistry,
+					settings,
+					sessionFactoryObserver,
+					initialSessionFact
+				);
+		}
 	}
 	
 	private void buildTypeRegistrations(ServiceRegistry serviceRegistry) {
