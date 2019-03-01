@@ -199,8 +199,12 @@ public class Configuration implements Serializable {
 	 */
 	private static final String SEARCH_STARTUP_METHOD = "enableHibernateSearch";
 
+	private boolean isCompiled = false;
+
 	private static SessionFactoryImpl initialSessionFact;
 	private static Object initialSessionFactMutex = new Object();
+
+	private Configuration parent = null;
 
 	protected MetadataSourceQueue metadataSourceQueue;
 	private transient ReflectionManager reflectionManager;
@@ -282,6 +286,76 @@ public class Configuration implements Serializable {
 		this( new SettingsFactory() );
 	}
 
+	/**
+	 * Copy constructor for Configuration objects
+	 * @param configuration Object to copy references from.
+	 */
+	public Configuration(Configuration configuration) {
+		this.settingsFactory = configuration.settingsFactory;
+		this.reflectionManager = configuration.reflectionManager;
+		this.metadataSourceQueue = configuration.metadataSourceQueue;
+
+		// entity bindings
+		this.classes = configuration.classes;
+		this.imports = configuration.imports;
+		this.collections = configuration.collections;
+		this.tables = configuration.tables;
+
+		// queries
+		this.namedQueries = configuration.namedQueries;
+		this.namedSqlQueries = configuration.namedSqlQueries;
+		this.sqlResultSetMappings = configuration.sqlResultSetMappings;
+
+		this.typeDefs = configuration.typeDefs;
+		this.filterDefinitions = configuration.filterDefinitions;
+		this.fetchProfiles = configuration.fetchProfiles;
+		this.auxiliaryDatabaseObjects = configuration.auxiliaryDatabaseObjects;
+
+		this.tableNameBinding = configuration.tableNameBinding;
+		this.columnNameBindingPerTable = configuration.columnNameBindingPerTable;
+
+		this.secondPasses = new ArrayList<SecondPass>();
+		this.propertyReferences = new ArrayList<Mappings.PropertyReference>();
+		this.extendsQueue = new HashMap<ExtendsQueueEntry, String>();
+
+		this.xmlHelper = configuration.xmlHelper;
+		this.interceptor = configuration.interceptor;
+		this.properties = Environment.getProperties();
+		this.entityResolver = configuration.entityResolver;
+
+		this.sqlFunctions = configuration.sqlFunctions;
+
+		this.entityTuplizerFactory = new EntityTuplizerFactory();
+		this.identifierGeneratorFactory = new DefaultIdentifierGeneratorFactory();
+
+		this.mappedSuperClasses = configuration.mappedSuperClasses;
+		this.metadataSourcePrecedence = configuration.metadataSourcePrecedence;
+
+		this.namedGenerators = configuration.namedGenerators;
+		this.joins = configuration.joins;
+		this.classTypes = configuration.classTypes;
+		this.generatorTables = configuration.generatorTables;
+		this.defaultNamedQueryNames = configuration.defaultNamedQueryNames;
+		this.defaultNamedNativeQueryNames = configuration.defaultNamedNativeQueryNames;
+		this.defaultSqlResultSetMappingNames = configuration.defaultSqlResultSetMappingNames;
+		this.defaultNamedGenerators = configuration.defaultNamedGenerators;
+		this.uniqueConstraintHoldersByTable = configuration.uniqueConstraintHoldersByTable;
+		this.mappedByResolver = configuration.mappedByResolver;
+		this.propertyRefResolver = configuration.propertyRefResolver;
+		this.caches = configuration.caches;
+		this.namingStrategy = EJB3NamingStrategy.INSTANCE;
+		// setEntityResolver( new EJB3DTDEntityResolver() );
+		this.anyMetaDefs = configuration.anyMetaDefs;
+		this.propertiesAnnotatedWithMapsId = configuration.propertiesAnnotatedWithMapsId;
+		this.propertiesAnnotatedWithIdAndToOne = configuration.propertiesAnnotatedWithIdAndToOne;
+		specjProprietarySyntaxEnabled = System.getProperty( "hibernate.enable_specj_proprietary_syntax" ) != null;
+		this.isCompiled = configuration.isCompiled;
+		this.isDefaultProcessed = configuration.isDefaultProcessed;
+
+		// set the parent configuration
+		this.parent = configuration;
+	}
+
 	protected void reset() {
 		metadataSourceQueue = new MetadataSourceQueue();
 		createReflectionManager();
@@ -354,6 +428,15 @@ public class Configuration implements Serializable {
 //	public ComponentTuplizerFactory getComponentTuplizerFactory() {
 //		return componentTuplizerFactory;
 //	}
+
+	/**
+	 * Get the parent configuration that this configuration came from. Parent will only
+	 * be non-null if this configuration was build with the copy constructor.
+	 * @return the parent configuration.
+	 */
+	public Configuration getParentConfiguration() {
+		return parent;
+	}
 
 	/**
 	 * Iterate the entity mappings
@@ -1314,12 +1397,21 @@ public class Configuration implements Serializable {
 	/**
 	 * Call this to ensure the mappings are fully compiled/built. Usefull to ensure getting
 	 * access to all information in the metamodel when calling e.g. getClassMappings().
+	 * Always recompile when you are trying to build mappings.
 	 */
 	public void buildMappings() {
-		secondPassCompile();
+		secondPassCompile(true);
 	}
 
-	protected void secondPassCompile() throws MappingException {
+	protected void secondPassCompile() {
+		secondPassCompile(false);
+	}
+
+	protected synchronized void secondPassCompile(boolean recompile) throws MappingException {
+		// If already compiled, bail out of this method, unless forcing a recompile.
+		if (isCompiled && !recompile) {
+			return;
+		}
 		LOG.trace( "Starting secondPassCompile() processing" );
 		
 		// TEMPORARY
@@ -1354,7 +1446,6 @@ public class Configuration implements Serializable {
 
 		// process metadata queue
 		{
-			metadataSourceQueue.syncAnnotatedClasses();
 			metadataSourceQueue.processMetadata( determineMetadataSourcePrecedence() );
 		}
 
@@ -1400,6 +1491,9 @@ public class Configuration implements Serializable {
 		}
 		
 		Thread.currentThread().setContextClassLoader( tccl );
+
+		// Mark this configuration as compiled
+		isCompiled = true;
 	}
 
 	private void processSecondPassesOfType(Class<? extends SecondPass> type) {

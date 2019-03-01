@@ -171,15 +171,26 @@ public class AuditConfiguration {
 	}
 
 	public synchronized static AuditConfiguration getFor(Configuration cfg, ClassLoaderService classLoaderService) {
-		AuditConfiguration verCfg = cfgs.get( cfg );
+		AuditConfiguration verCfg;
+		Configuration parent = cfg.getParentConfiguration();
+		// If this configuration was built from a parent configuration, use that configurations audit configuration.
+		if(parent != null) {
+			verCfg= cfgs.get( parent );
+			if(verCfg == null) {
+				verCfg = new AuditConfiguration( parent, classLoaderService );
+				cfgs.put( parent, verCfg );
 
-		if ( verCfg == null ) {
-			verCfg = new AuditConfiguration( cfg, classLoaderService );
-			cfgs.put( cfg, verCfg );
+				parent.buildMappings();
+			}
+		} else {
+			verCfg = cfgs.get(cfg);
+			if ( verCfg == null ) {
+				verCfg = new AuditConfiguration( cfg, classLoaderService );
+				cfgs.put( cfg, verCfg );
 
-			cfg.buildMappings();
+				cfg.buildMappings();
+			}
 		}
-
 		return verCfg;
 	}
 }
