@@ -73,7 +73,7 @@ public class EnversIntegrator implements Integrator {
 		final EventListenerRegistry listenerRegistry = serviceRegistry.getService( EventListenerRegistry.class );
 		listenerRegistry.addDuplicationStrategy( EnversListenerDuplicationStrategy.INSTANCE );
 
-        enversConfiguration = AuditConfiguration.getFor(
+		enversConfiguration = AuditConfiguration.getFor(
 				configuration,
 				serviceRegistry.getService(
 						ClassLoaderService.class
@@ -113,9 +113,10 @@ public class EnversIntegrator implements Integrator {
 
 	@Override
 	public void disintegrate(SessionFactoryImplementor sessionFactory, SessionFactoryServiceRegistry serviceRegistry) {
-		if ( enversConfiguration != null ) {
-			enversConfiguration.destroy();
-		}
+		// Vena: AuditConfiguration.destroy() is unsafe when we share metadata, so we won't call it.
+//		if ( enversConfiguration != null ) {
+//			enversConfiguration.destroy();
+//		}
 	}
 
 	/**

@@ -135,6 +135,25 @@ public class AuditConfiguration {
 		Thread.currentThread().setContextClassLoader( tccl );
 	}
 
+	/**
+	 * Construct an AuditConfiguration based on another instance of AuditConfiguration, where all the fields 
+	 * have the same values (same references), except classLoaderService is replaced.
+	 * @param baseAuditCfg - the AuditConfiguration to copy from
+	 * @param classLoaderService - the ClassLoaderService instance to substitute in the returned AuditConfiguration
+	 */
+	public AuditConfiguration(AuditConfiguration baseAuditCfg, ClassLoaderService classLoaderService) {
+		this.globalCfg = baseAuditCfg.globalCfg;
+		this.auditEntCfg = baseAuditCfg.auditEntCfg;
+		this.auditProcessManager = baseAuditCfg.auditProcessManager;
+		this.revisionInfoQueryCreator = baseAuditCfg.revisionInfoQueryCreator;
+		this.revisionInfoNumberReader = baseAuditCfg.revisionInfoNumberReader;
+		this.modifiedEntityNamesReader = baseAuditCfg.modifiedEntityNamesReader;
+		this.auditStrategy = baseAuditCfg.auditStrategy;
+		this.entCfg = baseAuditCfg.entCfg; 
+		// substitute
+		this.classLoaderService = classLoaderService;
+	}
+
 	private AuditStrategy initializeAuditStrategy(Class<?> revisionInfoClass, PropertyData revisionInfoTimestampData) {
 		AuditStrategy strategy;
 
@@ -181,6 +200,12 @@ public class AuditConfiguration {
 			CFGS.put( cfg, verCfg );
 
 			cfg.buildMappings();
+		}
+		else {
+			// Don't return the cached instance from CFGS directly. It has a reference to the original
+			// ClassLoaderService, which will get destroyed when SessionFactory is closed! 
+			// Make a copy that has all same fields, except classLoaderService is replaced with the desired one
+			verCfg = new AuditConfiguration( verCfg, classLoaderService );
 		}
 
 		return verCfg;
