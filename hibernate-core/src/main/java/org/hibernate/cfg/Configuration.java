@@ -208,6 +208,11 @@ public class Configuration implements Serializable {
 	 * Method to call to enable Search.
 	 */
 	private static final String SEARCH_STARTUP_METHOD = "enableHibernateSearch";
+	/**
+	 * Vena Fork, needed in order to share metadata among session factories, see the usage for more details.
+	 */
+
+	private boolean isCompiled = false;
 
 	protected MetadataSourceQueue metadataSourceQueue;
 	private transient ReflectionManager reflectionManager;
@@ -1368,12 +1373,22 @@ public class Configuration implements Serializable {
 	/**
 	 * Call this to ensure the mappings are fully compiled/built. Usefull to ensure getting
 	 * access to all information in the metamodel when calling e.g. getClassMappings().
+	 * Always recompile when you are trying to build mappings.
 	 */
 	public void buildMappings() {
-		secondPassCompile();
+		secondPassCompile(true);
 	}
 
-	protected void secondPassCompile() throws MappingException {
+	protected void secondPassCompile() {
+		secondPassCompile(false);
+	}
+
+	protected synchronized void secondPassCompile(boolean recompile) throws MappingException {
+		// If already compiled, bail out of this method, unless forcing a recompile.
+		if (isCompiled && !recompile) {
+			return;
+		}
+
 		LOG.trace( "Starting secondPassCompile() processing" );
 		
 		// TEMPORARY
@@ -1458,8 +1473,10 @@ public class Configuration implements Serializable {
 				buildUniqueKeyFromColumnNames( table, holder.getName(), holder.getColumns(), holder.getOrdering(), holder.isUnique() );
 			}
 		}
-		
+
 		Thread.currentThread().setContextClassLoader( tccl );
+		// Mark this configuration as compiled
+		isCompiled = true;
 	}
 
 	private void processSecondPassesOfType(Class<? extends SecondPass> type) {
