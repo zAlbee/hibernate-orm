@@ -219,6 +219,8 @@ public final class SessionFactoryImpl
 	private final transient CustomEntityDirtinessStrategy customEntityDirtinessStrategy;
 	private final transient CurrentTenantIdentifierResolver currentTenantIdentifierResolver;
 
+	private boolean keepServiceRegistryAlive = false;
+
 	@SuppressWarnings( {"unchecked", "ThrowableResultOfMethodCallIgnored"})
 	public SessionFactoryImpl(
 			final Configuration cfg,
@@ -1404,7 +1406,10 @@ public final class SessionFactoryImpl
 		);
 
 		observer.sessionFactoryClosed( this );
-		serviceRegistry.destroy();
+
+		if ( ! keepServiceRegistryAlive ) {
+			serviceRegistry.destroy();
+		}
 	}
 
 	public Cache getCache() {
@@ -1839,5 +1844,13 @@ public final class SessionFactoryImpl
 		boolean isNamed = ois.readBoolean();
 		final String name = isNamed ? ois.readUTF() : null;
 		return (SessionFactoryImpl) locateSessionFactoryOnDeserialization( uuid, name );
+	}
+
+	/**
+	 * Keep the ServiceRegistry alive when closing this SessionFactory.
+	 * Must be called before close() to have any effect.
+	 */
+	public void keepServiceRegistryAlive() {
+		this.keepServiceRegistryAlive = true;
 	}
 }
