@@ -1840,6 +1840,38 @@ public class Configuration implements Serializable {
 	 * @throws HibernateException usually indicates an invalid configuration or invalid mapping information
 	 */
 	public SessionFactory buildSessionFactory(ServiceRegistry serviceRegistry) throws HibernateException {
+		return buildSessionFactory(serviceRegistry, null);
+	}
+
+	/**
+	 * Create a {@link SessionFactory} using the properties and mappings in this configuration. The
+	 * {@link SessionFactory} will be immutable, so changes made to {@code this} {@link Configuration} after
+	 * building the {@link SessionFactory} will not affect it.
+	 * 
+	 * All SessionFactories created by this method will share memory references to the same metadata objects 
+	 * (immutable ones only). This both speeds up the creation and greatly reduces memory footprint. 
+	 * This method should only be used to connect to databases that have the same schema definitions (same 
+	 * entities and table/column definitions) but can be different databases or connections.
+	 *
+	 * @param serviceRegistry The registry of services to be used in creating this session factory.
+	 * @param initialSessionFact The SessionFactory whose immutable metadata is going to be shared with the 
+	 *               newly created SessionFactory
+	 *
+	 * @return The built {@link SessionFactory}
+	 *
+	 * @throws HibernateException usually indicates an invalid configuration or invalid mapping information
+	 */
+	public SessionFactory buildSharedSessionFactory(ServiceRegistry serviceRegistry, 
+			SessionFactoryImpl initialSessionFact) throws HibernateException {
+		if (initialSessionFact == null) {
+			throw new IllegalArgumentException("null initialSessionFact");
+		}
+		return buildSessionFactory(serviceRegistry, initialSessionFact);
+	}
+
+	private SessionFactory buildSessionFactory(ServiceRegistry serviceRegistry, 
+			SessionFactoryImpl initialSessionFact) throws HibernateException {
+
 		LOG.debugf( "Preparing to build session factory with filters : %s", filterDefinitions );
 		
 		buildTypeRegistrations( serviceRegistry );
@@ -1861,10 +1893,11 @@ public class Configuration implements Serializable {
 				mapping,
 				serviceRegistry,
 				settings,
-				sessionFactoryObserver
-			);
+				sessionFactoryObserver,
+				initialSessionFact
+		);
 	}
-	
+
 	private void buildTypeRegistrations(ServiceRegistry serviceRegistry) {
 		final TypeContributions typeContributions = new TypeContributions() {
 			@Override
