@@ -1408,7 +1408,6 @@ public class Configuration implements Serializable {
 
 		// process metadata queue
 		{
-			metadataSourceQueue.syncAnnotatedClasses();
 			metadataSourceQueue.processMetadata( determineMetadataSourcePrecedence() );
 		}
 
