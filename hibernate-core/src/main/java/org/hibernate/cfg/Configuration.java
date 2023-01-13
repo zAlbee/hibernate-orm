@@ -16,6 +16,7 @@ import org.hibernate.boot.Metadata;
 import org.hibernate.boot.MetadataBuilder;
 import org.hibernate.boot.MetadataSources;
 import org.hibernate.boot.SessionFactoryBuilder;
+import org.hibernate.boot.internal.SessionFactoryBuilderImpl;
 import org.hibernate.boot.model.TypeContributor;
 import org.hibernate.boot.model.naming.ImplicitNamingStrategy;
 import org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl;
@@ -26,16 +27,17 @@ import org.hibernate.boot.registry.BootstrapServiceRegistry;
 import org.hibernate.boot.registry.BootstrapServiceRegistryBuilder;
 import org.hibernate.boot.registry.StandardServiceRegistry;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
+import org.hibernate.boot.spi.MetadataImplementor;
 import org.hibernate.cfg.annotations.NamedEntityGraphDefinition;
 import org.hibernate.cfg.annotations.NamedProcedureCallDefinition;
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
-import org.hibernate.dialect.Dialect;
 import org.hibernate.dialect.function.SQLFunction;
 import org.hibernate.engine.ResultSetMappingDefinition;
 import org.hibernate.engine.spi.NamedQueryDefinition;
 import org.hibernate.engine.spi.NamedSQLQueryDefinition;
 import org.hibernate.internal.CoreLogging;
 import org.hibernate.internal.CoreMessageLogger;
+import org.hibernate.internal.SessionFactoryImpl;
 import org.hibernate.internal.util.xml.XmlDocument;
 import org.hibernate.proxy.EntityNotFoundDelegate;
 import org.hibernate.service.ServiceRegistry;
@@ -638,6 +640,55 @@ public class Configuration {
 		this.currentTenantIdentifierResolver = currentTenantIdentifierResolver;
 	}
 
+	// Vena Fork Start
+
+	/**
+	 * Adding this class extending the normal SessionFactoryBuilderImpl allows us to add another
+	 * method that accepts an initial SessionFactoryImpl to be shared.
+ 	 */
+	private static class VenaSessionFactoryBuilder extends SessionFactoryBuilderImpl {
+
+		private final MetadataImplementor metadata;
+
+		public VenaSessionFactoryBuilder(MetadataImplementor metadata) {
+			super(metadata);
+			this.metadata = metadata;
+		}
+
+		public SessionFactory build(SessionFactoryImpl initialSessionFact) {
+			return new SessionFactoryImpl(metadata, buildSessionFactoryOptions(), initialSessionFact);
+		}
+	}
+
+	/**
+	 * Create a {@link SessionFactory} using the properties and mappings in this configuration. The
+	 * {@link SessionFactory} will be immutable, so changes made to {@code this} {@link Configuration} after
+	 * building the {@link SessionFactory} will not affect it.
+	 *
+	 * All SessionFactories created by this method will share memory references to the same metadata objects
+	 * (immutable ones only). This both speeds up the creation and greatly reduces memory footprint.
+	 * This method should only be used to connect to databases that have the same schema definitions (same
+	 * entities and table/column definitions) but can be different databases or connections.
+	 *
+	 * @param serviceRegistry The registry of services to be used in creating this session factory.
+	 * @param initialSessionFact The SessionFactory whose immutable metadata is going to be shared with the
+	 *               newly created SessionFactory
+	 *
+	 * @return The built {@link SessionFactory}
+	 *
+	 * @throws HibernateException usually indicates an invalid configuration or invalid mapping information
+	 */
+	public SessionFactory buildSharedSessionFactory(ServiceRegistry serviceRegistry,
+	                                                SessionFactoryImpl initialSessionFact) throws HibernateException {
+		if (initialSessionFact == null) {
+			throw new IllegalArgumentException("null initialSessionFact");
+		}
+
+		final VenaSessionFactoryBuilder sessionFactoryBuilder = getSessionFactoryBuilder((StandardServiceRegistry) serviceRegistry);
+
+		return sessionFactoryBuilder.build(initialSessionFact);
+	}
+
 	/**
 	 * Create a {@link SessionFactory} using the properties and mappings in this configuration. The
 	 * SessionFactory will be immutable, so changes made to this Configuration after building the
@@ -652,7 +703,15 @@ public class Configuration {
 	public SessionFactory buildSessionFactory(ServiceRegistry serviceRegistry) throws HibernateException {
 		log.debug( "Building session factory using provided StandardServiceRegistry" );
 
-		final MetadataBuilder metadataBuilder = metadataSources.getMetadataBuilder( (StandardServiceRegistry) serviceRegistry );
+		final VenaSessionFactoryBuilder sessionFactoryBuilder = getSessionFactoryBuilder((StandardServiceRegistry) serviceRegistry);
+
+		return sessionFactoryBuilder.build(null);
+	}
+
+	private VenaSessionFactoryBuilder getSessionFactoryBuilder(StandardServiceRegistry serviceRegistry) {
+		log.debug( "Building session factory using provided StandardServiceRegistry" );
+
+		final MetadataBuilder metadataBuilder = metadataSources.getMetadataBuilder(serviceRegistry);
 		if ( implicitNamingStrategy != null ) {
 			metadataBuilder.applyImplicitNamingStrategy( implicitNamingStrategy );
 		}
@@ -691,7 +750,8 @@ public class Configuration {
 
 		final Metadata metadata = metadataBuilder.build();
 
-		final SessionFactoryBuilder sessionFactoryBuilder = metadata.getSessionFactoryBuilder();
+		final VenaSessionFactoryBuilder sessionFactoryBuilder = new VenaSessionFactoryBuilder((MetadataImplementor) metadata);
+
 		if ( interceptor != null && interceptor != EmptyInterceptor.INSTANCE ) {
 			sessionFactoryBuilder.applyInterceptor( interceptor );
 		}
@@ -707,10 +767,9 @@ public class Configuration {
 		if ( getCurrentTenantIdentifierResolver() != null ) {
 			sessionFactoryBuilder.applyCurrentTenantIdentifierResolver( getCurrentTenantIdentifierResolver() );
 		}
-
-		return sessionFactoryBuilder.build();
+		return sessionFactoryBuilder;
 	}
-
+	// Vena Fork End
 
 	/**
 	 * Create a {@link SessionFactory} using the properties and mappings in this configuration. The

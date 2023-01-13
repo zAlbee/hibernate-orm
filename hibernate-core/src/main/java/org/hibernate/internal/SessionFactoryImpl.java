@@ -209,7 +209,11 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	private DelayedDropAction delayedDropAction;
 	private transient StatisticsImplementor statisticsImplementor;
 
-	public SessionFactoryImpl(final MetadataImplementor metadata, SessionFactoryOptions options) {
+	// Vena Fork Start
+	private boolean keepServiceRegistryAlive = false;
+	// Vena Fork End
+
+	public SessionFactoryImpl(final MetadataImplementor metadata, SessionFactoryOptions options, SessionFactoryImpl initialSessionFact) {
 		LOG.debug( "Building session factory" );
 
 		this.sessionFactoryOptions = options;
@@ -309,162 +313,184 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 			// Prepare persisters and link them up with their cache
 			// region/access-strategy
 
-			final PersisterCreationContext persisterCreationContext = new PersisterCreationContext() {
-				@Override
-				public SessionFactoryImplementor getSessionFactory() {
-					return SessionFactoryImpl.this;
+			// Vena Fork Start
+			if (initialSessionFact != null) {
+				// Vena changes in if block here to share session factory data
+				LOG.debug("Sharing session factory metadata with " + initialSessionFact);
+
+				this.entityPersisters = initialSessionFact.entityPersisters;
+				this.collectionPersisters = initialSessionFact.collectionPersisters;
+				if (settings.isSecondLevelCacheEnabled() || !initialSessionFact.getAllSecondLevelCacheRegions().isEmpty()) {
+					throw new RuntimeException("Sharing session factory metadata is not supported with second level caching!");
 				}
-
-				@Override
-				public MetadataImplementor getMetadata() {
-					return metadata;
-				}
-			};
-
-			final RegionFactory regionFactory = cacheAccess.getRegionFactory();
-			final String cacheRegionPrefix = settings.getCacheRegionPrefix() == null ?
-					"" :
-					settings.getCacheRegionPrefix() + ".";
-			final PersisterFactory persisterFactory = serviceRegistry.getService( PersisterFactory.class );
-
-			// todo : consider removing this silliness and just have EntityPersister directly implement ClassMetadata
-			//		EntityPersister.getClassMetadata() for the internal impls simply "return this";
-			//		collapsing those would allow us to remove this "extra" Map
-			//
-			// todo : similar for CollectionPersister/CollectionMetadata
-
-			this.entityPersisters = new HashMap<String, EntityPersister>();
-			Map<String, ClassMetadata> inFlightClassMetadataMap = new HashMap<String, ClassMetadata>();
-			this.entityProxyInterfaceMap = CollectionHelper.concurrentMap( metadata.getEntityBindings().size() );
-			for ( final PersistentClass model : metadata.getEntityBindings() ) {
-				final String cacheRegionName = cacheRegionPrefix + model.getRootClass().getCacheRegionName();
-				// cache region is defined by the root-class in the hierarchy...
-				final EntityRegionAccessStrategy accessStrategy = determineEntityRegionAccessStrategy(
-						regionFactory,
-						entityRegionAccessStrategyMap,
-						model,
-						cacheRegionName
-				);
-
-				final NaturalIdRegionAccessStrategy naturalIdAccessStrategy = determineNaturalIdRegionAccessStrategy(
-						regionFactory,
-						cacheRegionPrefix,
-						naturalIdRegionAccessStrategyMap,
-						model
-				);
-
-				final EntityPersister cp = persisterFactory.createEntityPersister(
-						model,
-						accessStrategy,
-						naturalIdAccessStrategy,
-						persisterCreationContext
-				);
-				entityPersisters.put( model.getEntityName(), cp );
-				inFlightClassMetadataMap.put( model.getEntityName(), cp.getClassMetadata() );
-
-				if ( cp.getConcreteProxyClass() != null
-						&& cp.getConcreteProxyClass().isInterface()
-						&& !Map.class.isAssignableFrom( cp.getConcreteProxyClass() )
-						&& cp.getMappedClass() != cp.getConcreteProxyClass() ) {
-					// IMPL NOTE : we exclude Map based proxy interfaces here because that should
-					//		indicate MAP entity mode.0
-
-					if ( cp.getMappedClass().equals( cp.getConcreteProxyClass() ) ) {
-						// this part handles an odd case in the Hibernate test suite where we map an interface
-						// as the class and the proxy.  I cannot think of a real life use case for that
-						// specific test, but..
-						LOG.debugf(
-								"Entity [%s] mapped same interface [%s] as class and proxy",
-								cp.getEntityName(),
-								cp.getMappedClass()
-						);
+				this.classMetadata = initialSessionFact.classMetadata;
+				this.collectionMetadata = initialSessionFact.collectionMetadata;
+				this.collectionRolesByEntityParticipant = initialSessionFact.collectionRolesByEntityParticipant;
+				this.namedQueryRepository = initialSessionFact.namedQueryRepository;
+				this.entityProxyInterfaceMap = initialSessionFact.entityProxyInterfaceMap;
+			} else {
+				// Vena changes in else block to wrap maps with Collections.unmodifiableMap to ensure immutability when sharing
+				final PersisterCreationContext persisterCreationContext = new PersisterCreationContext() {
+					@Override
+					public SessionFactoryImplementor getSessionFactory() {
+						return SessionFactoryImpl.this;
 					}
-					else {
-						final String old = entityProxyInterfaceMap.put(
-								cp.getConcreteProxyClass(),
-								cp.getEntityName()
-						);
-						if ( old != null ) {
-							throw new HibernateException(
-									String.format(
-											Locale.ENGLISH,
-											"Multiple entities [%s, %s] named the same interface [%s] as their proxy which is not supported",
-											old,
-											cp.getEntityName(),
-											cp.getConcreteProxyClass().getName()
-									)
+
+					@Override
+					public MetadataImplementor getMetadata() {
+						return metadata;
+					}
+				};
+
+				final RegionFactory regionFactory = cacheAccess.getRegionFactory();
+				final String cacheRegionPrefix = settings.getCacheRegionPrefix() == null ?
+						"" :
+						settings.getCacheRegionPrefix() + ".";
+				final PersisterFactory persisterFactory = serviceRegistry.getService( PersisterFactory.class );
+
+				// todo : consider removing this silliness and just have EntityPersister directly implement ClassMetadata
+				//		EntityPersister.getClassMetadata() for the internal impls simply "return this";
+				//		collapsing those would allow us to remove this "extra" Map
+				//
+				// todo : similar for CollectionPersister/CollectionMetadata
+
+				this.entityPersisters = new HashMap<String, EntityPersister>();
+				Map<String, ClassMetadata> inFlightClassMetadataMap = new HashMap<String, ClassMetadata>();
+				Map<Class, String> tmpEntityProxyInterfaceMap = CollectionHelper.concurrentMap( metadata.getEntityBindings().size() );
+				for ( final PersistentClass model : metadata.getEntityBindings() ) {
+					final String cacheRegionName = cacheRegionPrefix + model.getRootClass().getCacheRegionName();
+					// cache region is defined by the root-class in the hierarchy...
+					final EntityRegionAccessStrategy accessStrategy = determineEntityRegionAccessStrategy(
+							regionFactory,
+							entityRegionAccessStrategyMap,
+							model,
+							cacheRegionName
+					);
+
+					final NaturalIdRegionAccessStrategy naturalIdAccessStrategy = determineNaturalIdRegionAccessStrategy(
+							regionFactory,
+							cacheRegionPrefix,
+							naturalIdRegionAccessStrategyMap,
+							model
+					);
+
+					final EntityPersister cp = persisterFactory.createEntityPersister(
+							model,
+							accessStrategy,
+							naturalIdAccessStrategy,
+							persisterCreationContext
+					);
+					this.entityPersisters.put( model.getEntityName(), cp );
+					inFlightClassMetadataMap.put( model.getEntityName(), cp.getClassMetadata() );
+
+					if ( cp.getConcreteProxyClass() != null
+							&& cp.getConcreteProxyClass().isInterface()
+							&& !Map.class.isAssignableFrom( cp.getConcreteProxyClass() )
+							&& cp.getMappedClass() != cp.getConcreteProxyClass() ) {
+						// IMPL NOTE : we exclude Map based proxy interfaces here because that should
+						//		indicate MAP entity mode.0
+
+						if ( cp.getMappedClass().equals( cp.getConcreteProxyClass() ) ) {
+							// this part handles an odd case in the Hibernate test suite where we map an interface
+							// as the class and the proxy.  I cannot think of a real life use case for that
+							// specific test, but..
+							LOG.debugf(
+									"Entity [%s] mapped same interface [%s] as class and proxy",
+									cp.getEntityName(),
+									cp.getMappedClass()
 							);
+						}
+						else {
+							final String old = tmpEntityProxyInterfaceMap.put(
+									cp.getConcreteProxyClass(),
+									cp.getEntityName()
+							);
+							if ( old != null ) {
+								throw new HibernateException(
+										String.format(
+												Locale.ENGLISH,
+												"Multiple entities [%s, %s] named the same interface [%s] as their proxy which is not supported",
+												old,
+												cp.getEntityName(),
+												cp.getConcreteProxyClass().getName()
+										)
+								);
+							}
 						}
 					}
 				}
-			}
-			this.classMetadata = Collections.unmodifiableMap( inFlightClassMetadataMap );
+				this.classMetadata = Collections.unmodifiableMap( inFlightClassMetadataMap );
 
-			this.collectionPersisters = new HashMap<String, CollectionPersister>();
-			Map<String, Set<String>> inFlightEntityToCollectionRoleMap = new HashMap<String, Set<String>>();
-			Map<String, CollectionMetadata> tmpCollectionMetadata = new HashMap<String, CollectionMetadata>();
-			for ( final Collection model : metadata.getCollectionBindings() ) {
-				final String cacheRegionName = cacheRegionPrefix + model.getCacheRegionName();
-				final CollectionRegionAccessStrategy accessStrategy = determineCollectionRegionAccessStrategy(
-						regionFactory,
-						collectionRegionAccessStrategyMap,
-						model,
-						cacheRegionName
-				);
+				Map<String, CollectionPersister> tmpCollectionPersisters = new HashMap<String, CollectionPersister>();
+				Map<String, Set<String>> inFlightEntityToCollectionRoleMap = new HashMap<String, Set<String>>();
+				Map<String, CollectionMetadata> tmpCollectionMetadata = new HashMap<String, CollectionMetadata>();
+				for ( final Collection model : metadata.getCollectionBindings() ) {
+					final String cacheRegionName = cacheRegionPrefix + model.getCacheRegionName();
+					final CollectionRegionAccessStrategy accessStrategy = determineCollectionRegionAccessStrategy(
+							regionFactory,
+							collectionRegionAccessStrategyMap,
+							model,
+							cacheRegionName
+					);
 
-				final CollectionPersister persister = persisterFactory.createCollectionPersister(
-						model,
-						accessStrategy,
-						persisterCreationContext
-				);
-				collectionPersisters.put( model.getRole(), persister );
-				tmpCollectionMetadata.put( model.getRole(), persister.getCollectionMetadata() );
-				Type indexType = persister.getIndexType();
-				if ( indexType != null && indexType.isAssociationType() && !indexType.isAnyType() ) {
-					String entityName = ( (AssociationType) indexType ).getAssociatedEntityName( this );
-					Set<String> roles = inFlightEntityToCollectionRoleMap.get( entityName );
-					if ( roles == null ) {
-						roles = new HashSet<String>();
-						inFlightEntityToCollectionRoleMap.put( entityName, roles );
+					final CollectionPersister persister = persisterFactory.createCollectionPersister(
+							model,
+							accessStrategy,
+							persisterCreationContext
+					);
+					tmpCollectionPersisters.put( model.getRole(), persister );
+					tmpCollectionMetadata.put( model.getRole(), persister.getCollectionMetadata() );
+					Type indexType = persister.getIndexType();
+					if ( indexType != null && indexType.isAssociationType() && !indexType.isAnyType() ) {
+						String entityName = ( (AssociationType) indexType ).getAssociatedEntityName( this );
+						Set<String> roles = inFlightEntityToCollectionRoleMap.get( entityName );
+						if ( roles == null ) {
+							roles = new HashSet<String>();
+							inFlightEntityToCollectionRoleMap.put( entityName, roles );
+						}
+						roles.add( persister.getRole() );
 					}
-					roles.add( persister.getRole() );
-				}
-				Type elementType = persister.getElementType();
-				if ( elementType.isAssociationType() && !elementType.isAnyType() ) {
-					String entityName = ( (AssociationType) elementType ).getAssociatedEntityName( this );
-					Set<String> roles = inFlightEntityToCollectionRoleMap.get( entityName );
-					if ( roles == null ) {
-						roles = new HashSet<String>();
-						inFlightEntityToCollectionRoleMap.put( entityName, roles );
+					Type elementType = persister.getElementType();
+					if ( elementType.isAssociationType() && !elementType.isAnyType() ) {
+						String entityName = ( (AssociationType) elementType ).getAssociatedEntityName( this );
+						Set<String> roles = inFlightEntityToCollectionRoleMap.get( entityName );
+						if ( roles == null ) {
+							roles = new HashSet<String>();
+							inFlightEntityToCollectionRoleMap.put( entityName, roles );
+						}
+						roles.add( persister.getRole() );
 					}
-					roles.add( persister.getRole() );
+				}
+
+				this.collectionMetadata = Collections.unmodifiableMap( tmpCollectionMetadata );
+
+				for ( Map.Entry<String, Set<String>> entityToCollectionRoleMapEntry : inFlightEntityToCollectionRoleMap.entrySet() ) {
+					entityToCollectionRoleMapEntry.setValue(
+							Collections.unmodifiableSet( entityToCollectionRoleMapEntry.getValue() )
+					);
+				}
+				this.collectionRolesByEntityParticipant = Collections.unmodifiableMap( inFlightEntityToCollectionRoleMap );
+
+				//Named Queries:
+				this.namedQueryRepository = metadata.buildNamedQueryRepository( this );
+
+				// after *all* persisters and named queries are registered
+				for ( EntityPersister persister : entityPersisters.values() ) {
+					persister.generateEntityDefinition();
+				}
+
+				this.collectionPersisters = Collections.unmodifiableMap(tmpCollectionPersisters);
+				this.entityProxyInterfaceMap = Collections.unmodifiableMap(tmpEntityProxyInterfaceMap);
+
+				for ( EntityPersister persister : entityPersisters.values() ) {
+					persister.postInstantiate();
+					registerEntityNameResolvers( persister );
+				}
+				for ( CollectionPersister persister : collectionPersisters.values() ) {
+					persister.postInstantiate();
 				}
 			}
-
-			this.collectionMetadata = Collections.unmodifiableMap( tmpCollectionMetadata );
-
-			for ( Map.Entry<String, Set<String>> entityToCollectionRoleMapEntry : inFlightEntityToCollectionRoleMap.entrySet() ) {
-				entityToCollectionRoleMapEntry.setValue(
-						Collections.unmodifiableSet( entityToCollectionRoleMapEntry.getValue() )
-				);
-			}
-			this.collectionRolesByEntityParticipant = Collections.unmodifiableMap( inFlightEntityToCollectionRoleMap );
-
-			//Named Queries:
-			this.namedQueryRepository = metadata.buildNamedQueryRepository( this );
-
-			// after *all* persisters and named queries are registered
-			for ( EntityPersister persister : entityPersisters.values() ) {
-				persister.generateEntityDefinition();
-			}
-
-			for ( EntityPersister persister : entityPersisters.values() ) {
-				persister.postInstantiate();
-				registerEntityNameResolvers( persister );
-			}
-			for ( CollectionPersister persister : collectionPersisters.values() ) {
-				persister.postInstantiate();
-			}
+			// Vena - rest of this function has no forked changes.
 
 			LOG.debug( "Instantiated session factory" );
 
@@ -1116,8 +1142,23 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 		);
 
 		observer.sessionFactoryClosed( this );
-		serviceRegistry.destroy();
+
+		// Vena Fork Start
+		if (!keepServiceRegistryAlive) {
+			serviceRegistry.destroy();
+		}
+		// Vena Fork End
 	}
+
+	// Vena Fork Start
+	/**
+	 * Keep the ServiceRegistry alive when closing this SessionFactory.
+	 * Must be called before close() to have any effect.
+	 */
+	public void keepServiceRegistryAlive() {
+		this.keepServiceRegistryAlive = true;
+	}
+	// Vena Fork End
 
 	public Cache getCache() {
 		return cacheAccess;
