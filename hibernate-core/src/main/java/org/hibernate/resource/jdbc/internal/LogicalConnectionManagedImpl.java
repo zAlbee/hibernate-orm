@@ -237,9 +237,9 @@ public class LogicalConnectionManagedImpl extends AbstractLogicalConnectionImple
 
 	@Override
 	protected void afterCompletion() {
-		afterTransaction();
-
 		resetConnection( initiallyAutoCommit );
 		initiallyAutoCommit = false;
+		// Vena backport fix from: https://github.com/hibernate/hibernate-orm/commit/e68986bf57528f9256d9c31cc6f39ad0b964208c
+		afterTransaction();
 	}
 }
